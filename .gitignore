@@ -1,0 +1,20 @@
+# Blender autosave / backup files
+*.blend1
+*.blend2
+
+# Local backups kept while patching this addon
+*.bak
+
+# Personal character files -- not part of the addon
+naruto.blend
+naruto_fixed.blend
+
+# Working notes from the porting sessions
+EpicFigRig-handoff-notes.md
+
+# Python / OS noise
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+desktop.ini
