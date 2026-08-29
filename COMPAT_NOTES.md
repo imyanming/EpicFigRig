@@ -12,7 +12,7 @@ broke*, never silently compute a wrong result. The 2022 code failed that test ba
 airborne.
 
 Tested on: **2.83** (original upstream), **4.2**, **5.0.1** (this fork).
-Current version: **1.0.21**.
+Current version: **1.0.22**.
 
 For what the *author* intended these buttons to do (and where this fork deliberately
 diverges), see [DESIGN_INTENT.md](DESIGN_INTENT.md).

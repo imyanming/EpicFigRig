@@ -39,13 +39,40 @@ bl_info = {
     "author": ("Jambo, Owenator Productions, Golden Ninja Ben, IX Productions "
                "and Citrine's Animations; Blender 4.2/5.0 compatibility fork "
                "2026 by LIN YANMING"),
-    "version": (1, 0, 21),
+    "version": (1, 0, 22),
     "blender": (4, 2, 0),
     "location": "View3D > Add > Mesh > New Object",
     "description": "An Epic Minifigure Rig",
     "wiki_url": "",
     "category": "Animation",
 }
+
+#-----------------------------------------------------------------------------
+# Imports and module-level constants
+#-----------------------------------------------------------------------------
+
+selected_armature = "FinishedRig"
+
+import os
+import bpy, mathutils
+from bpy.props import BoolProperty
+from bpy.types import PropertyGroup, Panel, Scene
+import math
+import traceback as _traceback
+
+addon_dirc = os. path .dirname (os .path .realpath (__file__))
+
+#COMPAT: Blender 4.0 replaced the old 32-slot Armature.layers bitmask with
+#named Bone Collections. This addon only ever toggled layer index 18 (the
+#hidden pivot-helper layer). On file load, Blender auto-converts non-empty
+#layers into collections named "Layer N" (1-indexed), so layer 18 usually
+#becomes "Layer 19" -- but that shifts if any earlier layer had zero bones
+#in it. If pivot switching silently does nothing on your rig, open the
+#Armature Data Properties > Bone Collections panel (or run
+#`print([c.name for c in bpy.context.object.data.collections])` in the
+#Python console) to find the real name and update PIVOT_BONECOLL_NAME below.
+PIVOT_LAYER_INDEX = 18
+PIVOT_BONECOLL_NAME = "Layer 19"
 
 #=============================================================================
 # DEFENSIVE COMPATIBILITY LAYER (added v1.0.12)
@@ -58,8 +85,6 @@ bl_info = {
 # into the sky. See COMPAT_NOTES.md for the running history.
 #=============================================================================
 
-import math
-import traceback as _traceback
 
 # Blender versions this addon has actually been exercised against.
 COMPAT_TESTED_VERSIONS = ("2.83 (original upstream)", "4.2", "5.0.1")
@@ -788,26 +813,6 @@ def repair_rig_drivers(armature_obj):
 #   original author intended.
 #=============================================================================
 
-selected_armature = "FinishedRig"
-
-import os
-import bpy, mathutils
-from bpy.props import BoolProperty
-from bpy.types import PropertyGroup, Panel, Scene
-
-addon_dirc = os. path .dirname (os .path .realpath (__file__))
-
-#COMPAT: Blender 4.0 replaced the old 32-slot Armature.layers bitmask with
-#named Bone Collections. This addon only ever toggled layer index 18 (the
-#hidden pivot-helper layer). On file load, Blender auto-converts non-empty
-#layers into collections named "Layer N" (1-indexed), so layer 18 usually
-#becomes "Layer 19" -- but that shifts if any earlier layer had zero bones
-#in it. If pivot switching silently does nothing on your rig, open the
-#Armature Data Properties > Bone Collections panel (or run
-#`print([c.name for c in bpy.context.object.data.collections])` in the
-#Python console) to find the real name and update PIVOT_BONECOLL_NAME below.
-PIVOT_LAYER_INDEX = 18
-PIVOT_BONECOLL_NAME = "Layer 19"
 
 def set_pivot_helper_visible(armature_obj, state):
     """Show/hide the hidden pivot-helper bones.
@@ -1180,7 +1185,6 @@ class AutoRig(bpy.types.Operator):
         all_objects = bpy.data.objects
         rig = all_objects['Rig']
         arma = bpy.data.objects['Rig']
-        arma_edit = arma.data.edit_bones
 
         
         
@@ -1546,9 +1550,7 @@ class ResetMasterBone(bpy.types.Operator):
 
             master_bone_snap = bpy.data.objects[selected_armature].pose.bones["Master Bone Snap"]
             master_bone = bpy.data.objects[selected_armature].data.bones["MasterBone"]
-            cur_frame = bpy.context.scene.frame_current
             context = bpy.context
-            cur_frame = bpy.context.scene.frame_current
             context = bpy.context
             
         #insert locrot on pivot bone and master bone frame -1 (only if animating)
@@ -1585,7 +1587,6 @@ class ResetMasterBone(bpy.types.Operator):
             bpy.context.view_layer.update()
             obj = master_bone_snap.id_data
             matrix_final = obj.matrix_world @ master_bone_snap.matrix
-            obj2 = master_bone.id_data
 
         #moves snap empty to snap bone
             obj_empty = bpy.data.objects["Master Bone Snap"]
@@ -1593,7 +1594,6 @@ class ResetMasterBone(bpy.types.Operator):
 
         #resets pivot bone locrot
             #bpy.context.scene.frame_set(bpy.context.scene.frame_current +1)
-            pivot_rotation = bpy.context.object.pose.bones["Pivot"].rotation_euler[0]
             bpy.data.objects[selected_armature].pose.bones["Pivot"].rotation_euler[0] = 0
             bpy.data.objects[selected_armature].pose.bones["Pivot"].location[0] = 0
             bpy.data.objects[selected_armature].pose.bones["Pivot"].location[1] = 0
@@ -1608,7 +1608,6 @@ class ResetMasterBone(bpy.types.Operator):
                 bpy.ops.anim.keyframe_insert_menu(type='BUILTIN_KSI_LocRot')
             
         #reset center of mass rotation
-            flip_bone_rotation = bpy.context.object.pose.bones["Center of Mass"].rotation_euler[2]
             bpy.ops.pose.select_all(action='SELECT')
             bpy.ops.pose.select_all(action='DESELECT')
             bpy.data.objects[selected_armature].pose.bones["Center of Mass"].select = True
@@ -1644,13 +1643,10 @@ class ResetMasterBone(bpy.types.Operator):
             _arm_obj = bpy.data.objects[selected_armature]
             _local_matrix = _arm_obj.matrix_world.inverted() @ obj_empty.matrix_world
             _local_loc = _local_matrix.to_translation()
-            _local_rot = _local_matrix.to_euler()
 
             snap_empty_xloc = _local_loc.x
             snap_empty_yloc = _local_loc.y
             snap_empty_zloc = _local_loc.z
-            snap_empty_xrot = _local_rot.x
-            snap_empty_yrot = _local_rot.y
             # NOTE: not _local_rot.z -- that silently drops a 180 degree
             # turn. See _yaw_from_matrix().
             snap_empty_zrot = _yaw_from_matrix(_local_matrix)
@@ -1757,7 +1753,6 @@ class SnapMasterBone(bpy.types.Operator):
         _auto_key = _should_keyframe(context)
         if context.mode == 'POSE':
 
-            name_mark = bpy.context.selected_objects[0]
 
             if len(context.selected_objects) == 1:
                 
@@ -1765,14 +1760,11 @@ class SnapMasterBone(bpy.types.Operator):
                 for obj in bpy.context.selected_objects:
                     
                     if obj.type == 'ARMATURE':
-                        name_mark = obj
                         global selected_armature
                         selected_armature = obj.name
             master_bone_snap = bpy.data.objects[selected_armature].pose .bones["Master Bone Snap"] #context.active_pose_bone
             master_bone = bpy.data.objects[selected_armature].data.bones["MasterBone"]
-            cur_frame = bpy.context.scene.frame_current
             context = bpy.context
-            cur_frame = bpy.context.scene.frame_current
             context = bpy.context
 
         #insert locrot on flip bone and master bone frame -1 (only if animating)
@@ -1805,7 +1797,6 @@ class SnapMasterBone(bpy.types.Operator):
             bpy.context.view_layer.update()
             obj = master_bone_snap.id_data
             matrix_final = obj.matrix_world @ master_bone_snap.matrix
-            obj2 = master_bone.id_data
 
         #moves snap empty to snap bone
             obj_empty = bpy.data.objects["Master Bone Snap"]
@@ -1819,7 +1810,6 @@ class SnapMasterBone(bpy.types.Operator):
             # Only do it (and undo it) when actually keying.
             if _auto_key:
                 bpy.context.scene.frame_set(bpy.context.scene.frame_current +1)
-            flip_bone_rotation = bpy.context.object.pose.bones["Center of Mass"].rotation_euler[2]
             bpy.ops.pose.select_all(action='SELECT')
             bpy.ops.pose.select_all(action='DESELECT')
             bpy.data.objects[selected_armature].pose.bones["Center of Mass"].select = True
@@ -1875,13 +1865,10 @@ class SnapMasterBone(bpy.types.Operator):
             _arm_obj = bpy.data.objects[selected_armature]
             _local_matrix = _arm_obj.matrix_world.inverted() @ obj_empty.matrix_world
             _local_loc = _local_matrix.to_translation()
-            _local_rot = _local_matrix.to_euler()
 
             snap_empty_xloc = _local_loc.x
             snap_empty_yloc = _local_loc.y
             snap_empty_zloc = _local_loc.z
-            snap_empty_xrot = _local_rot.x
-            snap_empty_yrot = _local_rot.y
             # NOTE: not _local_rot.z -- that silently drops a 180 degree
             # turn. See _yaw_from_matrix().
             snap_empty_zrot = _yaw_from_matrix(_local_matrix)
@@ -2296,7 +2283,6 @@ class SnapRight(bpy.types.Operator):
             copy_transform = bpy.data.objects[selected_object].constraints.new(
                 'COPY_TRANSFORMS')
             target_constraint = bpy.data.objects[selected_armature]
-            subtarget_constraint = bpy.data.objects[selected_armature].data.bones['Right Hand Snap Bone']
             
             copy_transform.target = target_constraint
             copy_transform.subtarget = "Right Hand Snap Bone"
@@ -2389,7 +2375,6 @@ class SnapLeft(bpy.types.Operator):
             copy_transform = bpy.data.objects[selected_object].constraints.new(
                 'COPY_TRANSFORMS')
             target_constraint = bpy.data.objects[selected_armature]
-            subtarget_constraint = bpy.data.objects[selected_armature].data.bones['Left Hand Snap Bone']
             
             copy_transform.target = target_constraint
             copy_transform.subtarget = "Left Hand Snap Bone"
@@ -2481,7 +2466,6 @@ class SnapHead(bpy.types.Operator):
             copy_transform = bpy.data.objects[selected_object].constraints.new(
                 'COPY_TRANSFORMS')
             target_constraint = bpy.data.objects[selected_armature]
-            subtarget_constraint = bpy.data.objects[selected_armature].data.bones['Head Accessory']
             
             copy_transform.target = target_constraint
             copy_transform.subtarget = "Head Accessory"
