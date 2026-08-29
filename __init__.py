@@ -39,7 +39,7 @@ bl_info = {
     "author": ("Jambo, Owenator Productions, Golden Ninja Ben, IX Productions "
                "and Citrine's Animations; Blender 4.2/5.0 compatibility fork "
                "2026 by LIN YANMING"),
-    "version": (1, 0, 20),
+    "version": (1, 0, 21),
     "blender": (4, 2, 0),
     "location": "View3D > Add > Mesh > New Object",
     "description": "An Epic Minifigure Rig",
@@ -323,12 +323,28 @@ def _guarded_execute(op, context):
             op.report({'ERROR'}, msg)
         return {'CANCELLED'}
 
+    arm_obj = None
     if getattr(op, "epic_kind", "POSE") != 'NONE':
-        if _preflight(context, op) is None:
+        arm_obj = _preflight(context, op)
+        if arm_obj is None:
             return {'CANCELLED'}
 
+    # The operators set keyframe_new_interpolation_type to CONSTANT and put it
+    # back at the end of _execute_inner -- but that restore is a plain
+    # statement, not a finally, so any error part-way through used to leave the
+    # preference stuck on CONSTANT. The user then had no idea why every
+    # keyframe they placed by hand came out stepped. Guarantee it here.
+    _prefs = bpy.context.preferences.edit
+    _user_interp = _prefs.keyframe_new_interpolation_type
+    _arm_for_keys = arm_obj if isinstance(arm_obj, bpy.types.Object) else None
+    _frame = context.scene.frame_current
+    _keys_before = _snapshot_keys(_arm_for_keys) if _arm_for_keys else set()
+
     try:
-        return op._execute_inner(context)
+        result = op._execute_inner(context)
+        if _arm_for_keys is not None:
+            _relax_new_keys(_arm_for_keys, _frame, _user_interp, _keys_before)
+        return result
     except EpicFigRigError as exc:
         op.report({'ERROR'}, str(exc))
         return {'CANCELLED'}
@@ -345,6 +361,8 @@ def _guarded_execute(op, context):
                ".".join(str(v) for v in bpy.app.version),
                ".".join(str(v) for v in COMPAT_TESTED_MAX)))
         return {'CANCELLED'}
+    finally:
+        _prefs.keyframe_new_interpolation_type = _user_interp
 
 
 def _warn_if_untested_blender():
@@ -510,6 +528,76 @@ def _yaw_from_matrix(matrix):
     except ValueError:
         return 0.0
     return math.atan2(basis[1][0], basis[0][0])
+
+
+def _iter_action_fcurves(owner):
+    """All driver-free F-curves on an ID, across Blender's action layouts."""
+    anim = getattr(owner, "animation_data", None)
+    action = getattr(anim, "action", None)
+    if action is None:
+        return
+    try:
+        for fcurve in action.fcurves:      # pre-4.4 layout
+            yield fcurve
+        return
+    except AttributeError:
+        pass
+    for layer in action.layers:            # 4.4+ slotted actions
+        for strip in layer.strips:
+            try:
+                bags = list(strip.channelbags)
+            except AttributeError:
+                continue
+            for bag in bags:
+                for fcurve in bag.fcurves:
+                    yield fcurve
+
+
+def _snapshot_keys(armature_obj):
+    """Which keyframes already exist, so we can tell apart the ones we add."""
+    seen = set()
+    for owner in (armature_obj, armature_obj.data):
+        for fcurve in _iter_action_fcurves(owner):
+            for point in fcurve.keyframe_points:
+                seen.add((id(fcurve), round(point.co[0], 4)))
+    return seen
+
+
+def _relax_new_keys(armature_obj, frame, interpolation, before):
+    """Give the keys we just wrote on `frame` the user's own interpolation.
+
+    These operators force CONSTANT while they run, because the trick they play
+    -- key the old pose one frame back, key the new pose on the current frame
+    -- only reads as an instant change if that *boundary* key holds flat.
+
+    The mistake was letting that apply to the current-frame key as well. That
+    key is the one that carries motion forward, and a CONSTANT key holds its
+    value until the next one, so everything after it stepped instead of
+    interpolating. With Auto-Key (or "Always keyframe") on, one press of Reset
+    Master Bone wrote 72 CONSTANT keys across 37 curves and the whole
+    animation went stop-motion.
+
+    So: frame-1 keeps CONSTANT, the current frame gets whatever the user had.
+    Only keys this operator actually created are touched -- anything that was
+    already on that frame is left alone."""
+    if interpolation == 'CONSTANT':
+        return 0                      # the user wants stepped keys anyway
+    changed = 0
+    for owner in (armature_obj, armature_obj.data):
+        for fcurve in _iter_action_fcurves(owner):
+            dirty = False
+            for point in fcurve.keyframe_points:
+                if round(point.co[0], 4) != round(float(frame), 4):
+                    continue
+                if (id(fcurve), round(point.co[0], 4)) in before:
+                    continue          # already existed; not ours to change
+                if point.interpolation == 'CONSTANT':
+                    point.interpolation = interpolation
+                    changed += 1
+                    dirty = True
+            if dirty:
+                fcurve.update()
+    return changed
 
 
 def find_epic_armature(context):
@@ -1023,9 +1111,9 @@ class AutoRig(bpy.types.Operator):
         child_leg = ["37364","16709", "37679", "41879"]
         child_leg_single = ["16709", "37679", "41879"]
         head_accessory = ["64798", "64807", "85974", "887990", "87991", "87995", "88283", "88286", "92081", "92083", "93217", "93562", "93563", "18228", "99240", "11908", "99930", "99248",
-        "98726", "10301", "10166", "10048", "10048", "10055", "10066", "11256", "12893", "13768", "13251", "13664", "13785", "13750", "13765", "13766", "15443", "15427", "15491", "15500",
+        "98726", "10301", "10166", "10048", "10055", "10066", "11256", "12893", "13768", "13251", "13664", "13785", "13750", "13765", "13766", "15443", "15427", "15491", "15500",
         "15485", "17346", "17630", "18858", "21787", "20688", "20877", "20595", "20597", "20596", "21777", "21268", "21269", "21778", "23186", "23187", "24072", "25775", "28798", "25378",
-        "25379", "26139", "25972", "27186", "27385", "27160", "28551", "28144", "28149", "27323", "28664", "28432", "28432", "25411", "25412", "25409", "28430", "34316", "25405", "34693", 
+        "25379", "26139", "25972", "27186", "27385", "27160", "28551", "28144", "28149", "27323", "28664", "28432", "25411", "25412", "25409", "28430", "34316", "25405", "34693", 
         "36060", "36489", "37823", "40938", "3901", "62810", "40239", "3625", "96859", "62711", "6093", "62696", "59363", "95225", "6025", "99245", "92746", "61183", "40240", "98371", "20603", 
         "21788", "21789", "92756", "40233", "24071", "28139", "65425", "35182", "35620", "49362", "92259", "18637", "15675", "18640", "92255", "19196", "65471", "65463", "66912", "3842", "50665", "16599", "30124", "49663", "36293", "93560", "35458",
         "15851", "3834", "90541", "4505", "26079", "4506", "2338", "3844", "3896", "48493",
@@ -1131,12 +1219,14 @@ class AutoRig(bpy.types.Operator):
                     bpy.context.object.data.bones["LeftFootIK"].hide = True
                     bpy.context.object.data.bones["RightLeg"].hide = True
                     bpy.context.object.data.bones["LeftLeg"].hide = True
+                    break
 
             #LEFT_LEG
             for num in leg_l:
                 if num in fig.data.name:
                     parent("LeftLeg", True, '["LLegSmear"]')
                     bpy.data.objects["LlegS"].material_slots[0].material = fig.material_slots[0].material
+                    break
 
 
 
@@ -1145,6 +1235,7 @@ class AutoRig(bpy.types.Operator):
                 if num in fig.data.name:
                     parent("RightLeg", True, '["RLegSmear"]')
                     bpy.data.objects["RlegS"].material_slots[0].material = fig.material_slots[0].material
+                    break
 
             #IK_HIP
             if "3815" in fig.data.name:
@@ -1154,6 +1245,7 @@ class AutoRig(bpy.types.Operator):
             for num in torso:
                 if num in fig.data.name:
                     parent("Torso Rock", False, '["LLegSmear"]')
+                    break
 
 
             #LEFT_ARM
@@ -1161,17 +1253,20 @@ class AutoRig(bpy.types.Operator):
                 if num in fig.data.name:
                     parent("Left Arm", True, '["LArmSmear"]')
                     bpy.data.objects["LarmS"].material_slots[0].material = fig.material_slots[0].material
+                    break
 
             #RIGHT_ARM
             for num in arm_r:
                 if num in fig.data.name:
                     parent("Right Arm", True, '["RArmSmear"]')
                     bpy.data.objects["RarmS"].material_slots[0].material = fig.material_slots[0].material
+                    break
             
             #HEAD
             for num in head_epic:
                 if num in fig.data.name:
                     parent("Head", False, '["LLegSmear"]')
+                    break
 
             #HEAD_ACCESSORY
             for num in head_accessory:
@@ -1183,11 +1278,13 @@ class AutoRig(bpy.types.Operator):
             for num in head_clothing_accessories:
                 if num in fig.data.name:
                     parent("Head Accessory", False, '["LLegSmear"]')
+                    break
 
             #HEAD_CLOTHING.VISORS
             for num in head_clothing_visors:
                 if num in fig.data.name:
                     parent("Head Accessory", False, '["LLegSmear"]')
+                    break
             
             if "50231" in fig.data.name:
                 append_cape()
@@ -1370,6 +1467,7 @@ class AutoRig(bpy.types.Operator):
                         fig.select_set(False)
 
                     parent(handname, False, '["LLegSmear"]')
+                    break
 
         bpy.data.armatures["Rig"].name = "FinishedRig"
         rig.name = "FinishedRig"
@@ -2176,17 +2274,27 @@ class SnapRight(bpy.types.Operator):
             #selects adds keyframes to the selected object
             selected_object_keyframe = bpy.data.objects[selected_object].keyframe_insert
             bpy.data.objects[selected_object].select_set(True)
-            obj = bpy.context.window.scene.objects[0]       # sets selected object
-            bpy.context.view_layer.objects.active = obj     # to active object!!
+            # FIX: this read scene.objects[0] -- whatever object happens to
+            # be first in the scene, which has nothing to do with the
+            # accessory being snapped. The trailing comment says what was
+            # meant. Two consequences: keyframe_insert_menu below ran with an
+            # unrelated active object, and if that object sits in a collection
+            # excluded from the view layer the assignment raises outright.
+            obj = bpy.data.objects[selected_object]
+            bpy.context.view_layer.objects.active = obj
             selected_object_keyframe(data_path='location', frame = (cur_frame - 1))
             selected_object_keyframe(data_path='rotation_euler', frame = (cur_frame - 1))
             selected_object_keyframe(data_path='scale', frame = (cur_frame - 1))
             
             #adds and sets up Copy Transforms Constraint
-            o = bpy.context.selected_objects[0]
-            o.constraints.new('COPY_TRANSFORMS')
-            
-            copy_transform = bpy.data.objects[selected_object].constraints['Copy Transforms']
+            # FIX: use the constraint constraints.new() just returned. Looking
+            # it up by name fetched the WRONG one whenever the accessory
+            # already carried a Copy Transforms constraint (snapping the same
+            # prop a second time): new() names the duplicate
+            # "Copy Transforms.001", so the lookup re-keyed the stale
+            # constraint and left the fresh one behind, unconfigured.
+            copy_transform = bpy.data.objects[selected_object].constraints.new(
+                'COPY_TRANSFORMS')
             target_constraint = bpy.data.objects[selected_armature]
             subtarget_constraint = bpy.data.objects[selected_armature].data.bones['Right Hand Snap Bone']
             
@@ -2212,7 +2320,7 @@ class SnapRight(bpy.types.Operator):
 
 
         else:
-            self.report({'ERROR'}, "Select both Armature and Obejct")
+            self.report({'ERROR'}, "Select both Armature and Object")
             
             
         return {'FINISHED'}
@@ -2259,17 +2367,27 @@ class SnapLeft(bpy.types.Operator):
             #selects adds keyframes to the selected object
             selected_object_keyframe = bpy.data.objects[selected_object].keyframe_insert
             bpy.data.objects[selected_object].select_set(True)
-            obj = bpy.context.window.scene.objects[0]       # sets selected object
-            bpy.context.view_layer.objects.active = obj     # to active object!!
+            # FIX: this read scene.objects[0] -- whatever object happens to
+            # be first in the scene, which has nothing to do with the
+            # accessory being snapped. The trailing comment says what was
+            # meant. Two consequences: keyframe_insert_menu below ran with an
+            # unrelated active object, and if that object sits in a collection
+            # excluded from the view layer the assignment raises outright.
+            obj = bpy.data.objects[selected_object]
+            bpy.context.view_layer.objects.active = obj
             selected_object_keyframe(data_path='location', frame = (cur_frame - 1))
             selected_object_keyframe(data_path='rotation_euler', frame = (cur_frame - 1))
             selected_object_keyframe(data_path='scale', frame = (cur_frame - 1))
             
             #adds and sets up Copy Transforms Constraint
-            o = bpy.context.selected_objects[0]
-            o.constraints.new('COPY_TRANSFORMS')
-            
-            copy_transform = bpy.data.objects[selected_object].constraints['Copy Transforms']
+            # FIX: use the constraint constraints.new() just returned. Looking
+            # it up by name fetched the WRONG one whenever the accessory
+            # already carried a Copy Transforms constraint (snapping the same
+            # prop a second time): new() names the duplicate
+            # "Copy Transforms.001", so the lookup re-keyed the stale
+            # constraint and left the fresh one behind, unconfigured.
+            copy_transform = bpy.data.objects[selected_object].constraints.new(
+                'COPY_TRANSFORMS')
             target_constraint = bpy.data.objects[selected_armature]
             subtarget_constraint = bpy.data.objects[selected_armature].data.bones['Left Hand Snap Bone']
             
@@ -2293,7 +2411,7 @@ class SnapLeft(bpy.types.Operator):
             bpy.context.scene.frame_set(bpy.context.scene.frame_current +1)
 
         else:
-            self.report({'ERROR'}, "Select both Armature and Obejct")
+            self.report({'ERROR'}, "Select both Armature and Object")
             
             
         return {'FINISHED'}
@@ -2341,17 +2459,27 @@ class SnapHead(bpy.types.Operator):
             #selects adds keyframes to the selected object
             selected_object_keyframe = bpy.data.objects[selected_object].keyframe_insert
             bpy.data.objects[selected_object].select_set(True)
-            obj = bpy.context.window.scene.objects[0]       # sets selected object
-            bpy.context.view_layer.objects.active = obj     # to active object!!
+            # FIX: this read scene.objects[0] -- whatever object happens to
+            # be first in the scene, which has nothing to do with the
+            # accessory being snapped. The trailing comment says what was
+            # meant. Two consequences: keyframe_insert_menu below ran with an
+            # unrelated active object, and if that object sits in a collection
+            # excluded from the view layer the assignment raises outright.
+            obj = bpy.data.objects[selected_object]
+            bpy.context.view_layer.objects.active = obj
             selected_object_keyframe(data_path='location', frame = (cur_frame - 1))
             selected_object_keyframe(data_path='rotation_euler', frame = (cur_frame - 1))
             selected_object_keyframe(data_path='scale', frame = (cur_frame - 1))
             
             #adds and sets up Copy Transforms Constraint
-            o = bpy.context.selected_objects[0]
-            o.constraints.new('COPY_TRANSFORMS')
-            
-            copy_transform = bpy.data.objects[selected_object].constraints['Copy Transforms']
+            # FIX: use the constraint constraints.new() just returned. Looking
+            # it up by name fetched the WRONG one whenever the accessory
+            # already carried a Copy Transforms constraint (snapping the same
+            # prop a second time): new() names the duplicate
+            # "Copy Transforms.001", so the lookup re-keyed the stale
+            # constraint and left the fresh one behind, unconfigured.
+            copy_transform = bpy.data.objects[selected_object].constraints.new(
+                'COPY_TRANSFORMS')
             target_constraint = bpy.data.objects[selected_armature]
             subtarget_constraint = bpy.data.objects[selected_armature].data.bones['Head Accessory']
             
@@ -2377,7 +2505,7 @@ class SnapHead(bpy.types.Operator):
 
 
         else:
-            self.report({'ERROR'}, "Select both Armature and Obejct")
+            self.report({'ERROR'}, "Select both Armature and Object")
             
             
         return {'FINISHED'}

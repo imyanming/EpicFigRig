@@ -12,7 +12,7 @@ broke*, never silently compute a wrong result. The 2022 code failed that test ba
 airborne.
 
 Tested on: **2.83** (original upstream), **4.2**, **5.0.1** (this fork).
-Current version: **1.0.20**.
+Current version: **1.0.21**.
 
 For what the *author* intended these buttons to do (and where this fork deliberately
 diverges), see [DESIGN_INTENT.md](DESIGN_INTENT.md).
@@ -112,6 +112,8 @@ clear message instead of a traceback, via the preflight in `_guarded_execute()`.
 | 7 | `SnapMasterBone` moved MasterBone correctly but **also displaced the character** by the same amount, accumulating every press (4.99 → 9.98 → 14.97 → 19.96). It lacked the hip/IK-leg compensation `ResetMasterBone` has. Present in the 2022 original. | Added the same compensation block. Both operators now hold the character still. |
 | 8 | The `Pivot Slide` frame-1 keyframe recorded the *new* value instead of the old one, flattening the before/after pop. | Remember the old value, key it on frame-1, then set 0. |
 | 10 | **Smear never hid the real limb.** `driverCreate()` fetched the curve to stamp with `obj.animation_data.drivers[0]` for *both* the `hide_viewport` and the `hide_render` driver, so the second call piled two more points onto the first curve. Limbs ended up with 6 keyframe points instead of 2 and the on/off mapping stopped switching — the smear mesh appeared but the arm/leg stayed visible, drawn on top of it. The smear meshes' own curves were always correct, which is why only the limbs looked wrong. | `_set_switch_curve()` stamps the F-curve `driver_add()` returned, normalising it to exactly two CONSTANT points. `repair_rig_drivers()` also re-normalises existing rigs, so the **Fix Rig Settings Drivers** button repairs characters already rigged. |
+| 11 | **Everything the buttons keyed came out stepped**, so animation looked like bad stop-motion. The operators force `CONSTANT` interpolation while they run — correct for the frame-1 *boundary* key, which must hold flat for the before/after pop to read, but it also applied to the key on the current frame. That key carries motion forward, and a CONSTANT key holds until the next one. One press of Reset Master Bone with Auto-Key on wrote **72 CONSTANT keys across 37 curves**. | `_relax_new_keys()` gives just the current-frame keys the user's own interpolation back, leaving frame-1 CONSTANT. Only keys the operator actually created are touched. Now `[(19, CONSTANT), (20, BEZIER)]`. |
+| 10 | The interpolation preference was restored by a plain statement at the end of each operator, not a `finally`. Any error part-way through left the user's global `keyframe_new_interpolation_type` **stuck on CONSTANT** — every keyframe they placed by hand afterwards came out stepped, with no clue why. | Restored in a `finally` inside `_guarded_execute()`, so it cannot leak on any exit path. Verified on both the success and the exception path. |
 | 9 | The three pivot operators assigned `_prev_interp` inside `if context.mode == 'POSE':` but restored it unconditionally → `UnboundLocalError` on the error path. | Seeded before the branch. |
 
 ---
