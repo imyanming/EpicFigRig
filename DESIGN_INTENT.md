@@ -7,7 +7,7 @@ so this file records where the author's account confirms a change, where it cont
 one, and what was measured either way.
 
 Companion to [COMPAT_NOTES.md](COMPAT_NOTES.md), which covers Blender API breakage.
-Addon version at time of writing: **1.0.20**.
+Addon version at time of writing: **1.0.22**.
 
 ---
 
